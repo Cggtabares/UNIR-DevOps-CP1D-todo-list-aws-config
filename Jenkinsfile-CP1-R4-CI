@@ -113,6 +113,7 @@ pipeline {
                 sh '''
                     git remote set-url origin https://x-access-token:$GIT_ACCESS_TOKEN@github.com/Cggtabares/UNIR-DevOps-CP1D-todo-list-aws-config.git
                     git checkout -f production
+                    git merge master
                     git push origin production
                 '''
                 // Clean after promote
