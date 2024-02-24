@@ -113,9 +113,6 @@ pipeline {
                 sh '''
                     git remote set-url origin https://x-access-token:$GIT_ACCESS_TOKEN@github.com/Cggtabares/UNIR-DevOps-CP1D-todo-list-aws-config.git
                     git checkout -f production
-                    git merge --no-commit staging
-                    git checkout HEAD -- Jenkinsfile
-                    git -c core.editor=/bin/true merge --continue
                     git push origin production
                 '''
                 // Clean after promote
