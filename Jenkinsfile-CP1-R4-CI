@@ -1,0 +1,137 @@
+pipeline {
+    agent any
+    options {
+        // This is required if you want to clean before build
+        skipDefaultCheckout(true)
+    }
+    stages {
+        stage('Get Code') {
+            agent {
+                label 'Main'
+            }
+            steps {
+                // Clean before build
+                cleanWs()
+                // Obtener código del repo de la rama develop
+                git branch: 'master', url: 'https://github.com/Cggtabares/UNIR-DevOps-CP1D-todo-list-aws-config.git'
+                sh '''
+                    echo 'Jenkins-Main'
+                    dig +short myip.opendns.com @resolver1.opendns.com
+                    whoami
+                    hostname
+                    echo 'WORKSPACE'
+                    echo ${WORKSPACE}
+                    wget https://raw.githubusercontent.com/Cggtabares/UNIR-DevOps-CP1D-todo-list-aws-config/staging/samconfig.toml
+                    wget https://raw.githubusercontent.com/Cggtabares/UNIR-DevOps-CP1D-todo-list-aws-config/staging/template.yaml
+                '''
+                stash name: 'code', includes: '**'
+            }
+        }
+        stage('Static') {
+            parallel{
+                stage('flake8'){
+                    agent { 
+                        label 'agent1'
+                    }
+                    steps {
+                        unstash name: 'code'
+                        sh '''
+                            echo 'Jenkins-agent1'
+                            dig +short myip.opendns.com @resolver1.opendns.com
+                            whoami
+                            hostname
+                            echo 'WORKSPACE'
+                            echo ${WORKSPACE}
+                            flake8 --exit-zero --format=pylint src > flake8.out
+                        '''
+                        recordIssues tools: [flake8(name: 'Flake8', pattern: 'flake8.out')], qualityGates:[[threshold:10, type: 'TOTAL', unstable: false],[threshold: 12, type: 'TOTAL', unstable: false]]
+                	}
+                }
+                stage('bandit') {
+                    agent { 
+                        label 'agent1'
+                    }
+                    steps {
+                        unstash name: 'code'
+                	    sh '''
+                	        echo 'Jenkins-agent1'
+                            dig +short myip.opendns.com @resolver1.opendns.com
+                            whoami
+                            hostname
+                            echo 'WORKSPACE'
+                            echo ${WORKSPACE}
+                                bandit --exit-zero -r . -f custom -o bandit.out --severity-level medium --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                            '''
+                            recordIssues tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')], qualityGates:[[threshold:1, type: 'TOTAL', unstable: false],[threshold: 2, type: 'TOTAL', unstable: false]]
+                    }
+                }
+            }
+        }
+        stage('Deploy') {
+            agent {
+                label 'Main'
+            }
+            steps {
+                unstash name: 'code'
+                sh '''
+                    echo 'Jenkins-Main'
+                    dig +short myip.opendns.com @resolver1.opendns.com
+                    whoami
+                    hostname
+                    echo 'WORKSPACE'
+                    echo ${WORKSPACE}
+                    sam build
+                    sam deploy --force-upload --no-confirm-changeset --no-fail-on-empty-changeset --stack-name todo-list-aws-staging --config-env staging --resolve-s3
+                    sam list endpoints --stack-name todo-list-aws-staging --region us-east-1 --output json | grep https | head -n 1 | sed 's/\"//g; s/,//g' | tr -d '[:space:]' > BASE_URL.txt
+                '''
+                stash includes: 'BASE_URL.txt', name: 'BASE_URL'
+            }
+        }
+        stage('Rest') {
+             agent{label 'agent2'}
+            steps {
+                unstash name: 'code'
+                unstash name: 'BASE_URL'
+                sh '''
+                    echo 'Jenkins-agent2'
+                    dig +short myip.opendns.com @resolver1.opendns.com
+                    whoami
+                    hostname
+                    echo 'WORKSPACE'
+                    echo ${WORKSPACE}
+                    export BASE_URL=$(cat BASE_URL.txt)
+                    set PYTHONPATH = ${WORKSPACE}
+                    pytest --junitxml=result-rest.xml -s ${WORKSPACE}/test/integration/todoApiTest.py
+                '''
+                    junit 'result-rest.xml'
+            }
+        }
+        stage('Promote') {
+            agent{label 'Main'}
+            steps {
+                git branch: 'staging', url: 'https://github.com/Cggtabares/UNIR-DevOps-CP1D-todo-list-aws-config.git'
+                sh '''
+                    git remote set-url origin https://x-access-token:$GIT_ACCESS_TOKEN@github.com/Cggtabares/UNIR-DevOps-CP1D-todo-list-aws-config.git
+                    git checkout production
+                    git merge --no-commit staging
+                    
+                    git -c core.editor=/bin/true merge --continue
+                    git push origin production
+                '''
+                // Clean after promote
+                cleanWs()
+            }
+        }
+    }
+    post {
+        // Clean after build
+        always {
+            cleanWs(cleanWhenNotBuilt: false,
+                    deleteDirs: true,
+                    disableDeferredWipeout: true,
+                    notFailBuild: true,
+                    patterns: [[pattern: '.gitignore', type: 'INCLUDE'],
+                               [pattern: '.propsfile', type: 'EXCLUDE']])
+        }
+    }
+}
